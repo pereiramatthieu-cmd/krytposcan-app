@@ -19,6 +19,18 @@ const TOUCH_BAND = 0.02;        // "touching" = today's low within 2% of the zon
 //   - Resistance-based targets and ATR-based stops both backtested worse than the
 //     flat -10% / +40-50% the user asked for — that flat range turned out to
 //     already be close to optimal, not just "simple."
+//   - Rejecting BUYs where the close has already run far from the support level
+//     (maxEntryDistancePct) — the intuitive fix for "why is it telling me to buy
+//     something that already bounced 30-40%" — was tested and made things WORSE
+//     (Sharpe 1.03 -> 0.32 at an 8% cap). Anchoring the stop to the support level
+//     instead of the entry price (stopMode: 'support') was tested too, also worse
+//     (best case 0.84 Sharpe at a tight 3%-below-support stop). In this sample, a
+//     bigger same-day recovery off the low correlated with a stronger move, not a
+//     weaker one — cutting those trades removed some of the best performers. Both
+//     options are left available (off by default) for a stricter, more intuitive
+//     — but backtested-worse — version of the strategy; distancePct is still
+//     returned on every row so the UI can flag "extended" entries instead of
+//     silently rejecting them.
 export const DEFAULT_OPTS = {
   trendFilter: false,
   trendPeriod: 100,
@@ -27,13 +39,20 @@ export const DEFAULT_OPTS = {
   requireVolume: false,      // require above-average volume on the bounce day
   volumeWindow: 20,
   volumeMult: 1.0,
+  maxEntryDistancePct: Infinity, // opt-in: reject BUY if close is already more than this % above support
   reverseTouchScaling: false, // if true, FEWER touches -> higher confidence/target (level "wears down")
-  stopMode: 'fixed',        // 'fixed' | 'atr'
+  stopMode: 'fixed',        // 'fixed' | 'atr' | 'support'
   fixedStopMult: 0.90,      // -10%
   atrStopMult: 2.5,
+  supportStopMult: 0.95,    // stop = 5% below the support level itself (stopMode: 'support')
   targetMode: 'fixed',      // 'fixed' | 'resistance'
   fixedTargetRange: [1.40, 1.50],
 };
+
+// Rows with distancePct above this are flagged "Extended" in the UI — not
+// rejected (that backtests worse), just clearly labeled so it's obvious the
+// entry isn't right at the support level anymore.
+export const EXTENDED_THRESHOLD_PCT = 8;
 
 function sma(series, idx, period) {
   if (idx < period - 1) return null;
@@ -144,7 +163,12 @@ export function evaluateSupportSignal(series, idx, opts = {}) {
   const avgVol = o.requireVolume ? avgVolume(series, idx, o.volumeWindow) : null;
   const volumeOk = !o.requireVolume || avgVol == null || bar.volume >= avgVol * o.volumeMult;
 
-  const touchedToday = touchedZone && bounceOk && trendOk && volumeOk;
+  // A volatile day can touch the support zone on the low and still close far above
+  // it (wide daily range) — that's no longer "buying at support", it's chasing an
+  // already-completed bounce. Cap how extended the close is allowed to be.
+  const notTooExtended = distancePct <= o.maxEntryDistancePct;
+
+  const touchedToday = touchedZone && bounceOk && trendOk && volumeOk && notTooExtended;
 
   const aboveCandidates = resistanceZones.filter(z => z.level >= bar.price * 0.99);
   const nearestResistance = aboveCandidates.length
@@ -170,6 +194,8 @@ export function evaluateSupportSignal(series, idx, opts = {}) {
   if (o.stopMode === 'atr') {
     const a = atr(series, idx);
     stopPrice = a != null ? bar.price - a * o.atrStopMult : bar.price * o.fixedStopMult;
+  } else if (o.stopMode === 'support') {
+    stopPrice = nearestSupport.level * o.supportStopMult;
   } else {
     stopPrice = bar.price * o.fixedStopMult;
   }

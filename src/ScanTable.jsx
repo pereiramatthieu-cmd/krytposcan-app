@@ -3,16 +3,28 @@ import { Search, Radar } from 'lucide-react';
 import { fmtPrice, fmtPct } from './format';
 import { fetchKlineSeries, fmtShortDate } from './klines';
 import { SCAN_LOOKBACK_DAYS } from './useSupportScan';
+import { EXTENDED_THRESHOLD_PCT } from './supportResistance';
 import SupportChart from './SupportChart';
 
-function SignalBadge({ signal }) {
+function SignalBadge({ signal, distancePct }) {
   const styles = {
     BUY:   'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
     WATCH: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
   };
+  const extended = signal === 'BUY' && distancePct > EXTENDED_THRESHOLD_PCT;
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold tracking-wide ${styles[signal]}`}>
-      {signal}
+    <span className="inline-flex items-center gap-1">
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold tracking-wide ${styles[signal]}`}>
+        {signal}
+      </span>
+      {extended && (
+        <span
+          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-500/15 text-orange-400 border border-orange-500/30"
+          title="Close is already well above the support level — not a fresh touch, chasing an in-progress bounce."
+        >
+          Extended
+        </span>
+      )}
     </span>
   );
 }
@@ -172,7 +184,7 @@ export default function ScanTable({ scan }) {
                     <span className="text-sm font-semibold text-zinc-100">{r.ticker}</span>
                     <span className="ml-2 text-xs text-zinc-600">{r.name}</span>
                   </td>
-                  <td className="px-4 py-3"><SignalBadge signal={r.signal} /></td>
+                  <td className="px-4 py-3"><SignalBadge signal={r.signal} distancePct={r.distancePct} /></td>
                   <td className="px-4 py-3 text-xs text-zinc-300 tabular-nums font-mono">{fmtPrice(r.price)}</td>
                   <td className={`px-4 py-3 text-xs font-semibold tabular-nums ${r.distancePct <= 3 ? 'text-emerald-400' : 'text-zinc-400'}`}>
                     {fmtPct(r.distancePct)}
