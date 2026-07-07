@@ -1,6 +1,5 @@
-import { calcEMA, calcRSI, calcATR, calcMACD, calcBollinger } from './indicators';
-
 const BINANCE_API = 'https://api.binance.com/api/v3';
+const STALE_THRESHOLD_MS = 4 * 86400000; // 4 days
 
 export function fmtShortDate(ms) {
   const d = new Date(ms);
@@ -12,47 +11,43 @@ export function fmtLongDate(ms) {
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
 
-// Fetches daily klines for one ticker and computes every indicator the app uses
-// (EMA20/50, RSI14, ATR14, MACD, Bollinger) over the full fetched window so values
-// are properly warmed up — shared by the live chart fetch and the backtester so
-// both run on identically-built series.
+// Fetches daily OHLCV for one ticker from Binance spot. Returns null (rather than
+// throwing) when the ticker has no Binance USDT pair, or when the pair is
+// delisted/inactive — Binance keeps serving historical data for dead symbols
+// (e.g. old BTTUSDT, frozen at its Jan 2022 delisting) and `limit` without a
+// startTime returns candles from the START of that frozen window rather than
+// "now" once a symbol stops trading, silently pulling in years-old data.
 export async function fetchKlineSeries(ticker, limit, dateFormatter = fmtShortDate) {
   const symbol = `${ticker}USDT`;
-  const res = await fetch(`${BINANCE_API}/klines?symbol=${symbol}&interval=1d&limit=${limit}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  let res;
+  try {
+    res = await fetch(`${BINANCE_API}/klines?symbol=${symbol}&interval=1d&limit=${limit}`);
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
   const raw = await res.json();
-  if (!Array.isArray(raw) || raw.length === 0) throw new Error('empty history');
+  if (!Array.isArray(raw) || raw.length === 0) return null;
 
-  const highs   = raw.map(k => parseFloat(k[2]));
-  const lows    = raw.map(k => parseFloat(k[3]));
-  const closes  = raw.map(k => parseFloat(k[4]));
-  const volumes = raw.map(k => parseFloat(k[5]));
-  const times   = raw.map(k => k[0]);
+  const lastTime = raw[raw.length - 1][0];
+  if (Date.now() - lastTime > STALE_THRESHOLD_MS) return null;
 
-  const ema20arr = calcEMA(closes, 20);
-  const ema50arr = calcEMA(closes, 50);
-  const rsiArr   = calcRSI(closes, 14);
-  const atrArr   = calcATR(highs, lows, closes, 14);
-  const { macd, signal: macdSignal, histogram: macdHist } = calcMACD(closes);
-  const { upper: bbUpper, mid: bbMid, lower: bbLower } = calcBollinger(closes, 20, 2);
-
-  return closes.map((price, i) => ({
-    time:   times[i],
-    date:   dateFormatter(times[i]),
-    price,
-    high:   highs[i],
-    low:    lows[i],
-    volume: volumes[i],
-    volUp:  i === 0 || price >= closes[i - 1],
-    ema20:  ema20arr[i],
-    ema50:  ema50arr[i],
-    rsi:    rsiArr[i],
-    atr:    atrArr[i],
-    macd:       macd[i],
-    macdSignal: macdSignal[i],
-    macdHist:   macdHist[i],
-    bbUpper: bbUpper[i],
-    bbMid:   bbMid[i],
-    bbLower: bbLower[i],
+  return raw.map(k => ({
+    time:   k[0],
+    date:   dateFormatter(k[0]),
+    high:   parseFloat(k[2]),
+    low:    parseFloat(k[3]),
+    price:  parseFloat(k[4]), // close
+    volume: parseFloat(k[5]),
   }));
+}
+
+// Pegged/near-pegged assets (stablecoins, tokenized cash/treasury products) don't
+// have real swing structure — rather than chase an ever-growing name blocklist,
+// detect them generically: if price barely moved over the whole window, skip it.
+export function isFlatAsset(series, thresholdPct = 8) {
+  const prices = series.map(b => b.price);
+  const max = Math.max(...prices);
+  const min = Math.min(...prices);
+  return min > 0 && ((max - min) / min) * 100 < thresholdPct;
 }

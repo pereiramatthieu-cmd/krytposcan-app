@@ -38,14 +38,3 @@ export function fmtVol(v) {
   if (v >= 1e6) return `${(v / 1e6).toFixed(0)}M`;
   return v.toFixed(0);
 }
-
-// Reads a perp funding rate (8h %, Binance convention) the way a derivatives desk would:
-// persistent positive funding = longs paying shorts = crowd is leaning long (and vice versa).
-export function fundingBias(pct) {
-  if (pct == null) return { label: '—', className: 'bg-zinc-800 text-zinc-500' };
-  if (pct >= 0.05)  return { label: 'Crowded long — funding elevated', className: 'bg-red-500/15 text-red-400 border border-red-500/30' };
-  if (pct >= 0.02)  return { label: 'Longs paying — mild long bias', className: 'bg-amber-500/15 text-amber-400 border border-amber-500/30' };
-  if (pct <= -0.05) return { label: 'Crowded short — funding elevated', className: 'bg-red-500/15 text-red-400 border border-red-500/30' };
-  if (pct <= -0.02) return { label: 'Shorts paying — mild short bias', className: 'bg-amber-500/15 text-amber-400 border border-amber-500/30' };
-  return { label: 'Neutral funding', className: 'bg-zinc-800 text-zinc-400' };
-}

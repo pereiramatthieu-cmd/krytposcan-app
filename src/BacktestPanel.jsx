@@ -34,14 +34,14 @@ function EquityTooltip({ active, payload, label }) {
 }
 
 export default function BacktestPanel({ backtest, startingCapital }) {
-  const { status, result, error, run } = backtest;
+  const { status, progress, result, error, run } = backtest;
 
   return (
     <div className="mx-5 mb-4 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
       <div className="px-5 py-3 border-b border-zinc-800 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <TestTube2 size={14} className="text-zinc-400" />
-          <span className="text-sm font-semibold text-zinc-200">Backtest — Swing Strategy (2 Years)</span>
+          <span className="text-sm font-semibold text-zinc-200">Backtest — Support Strategy (2 Years, Top 300)</span>
         </div>
         <button
           onClick={run}
@@ -49,24 +49,25 @@ export default function BacktestPanel({ backtest, startingCapital }) {
           className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/40 hover:bg-indigo-500/30 transition-colors disabled:opacity-50"
         >
           <Play size={12} />
-          {status === 'loading' ? 'Running…' : status === 'done' ? 'Re-run' : 'Run Backtest'}
+          {status === 'loading'
+            ? `Fetching ${progress.done}/${progress.total}…`
+            : status === 'done' ? 'Re-run' : 'Run Backtest'}
         </button>
       </div>
 
       {status === 'idle' && (
         <p className="px-5 py-6 text-xs text-zinc-600">
-          Replays the exact live signal logic (EMA20/50, RSI14) day-by-day over ~2 years of Binance
-          daily history, using the same 20%-sizing / max-5-position rules as the paper trading engine.
+          Replays the exact live support-touch rule day-by-day over ~2 years of Binance daily
+          history across the top 300 coins: buy on a confirmed support test, exit at +40-50%
+          target or -10% stop, 20% sizing, max 5 concurrent positions.
         </p>
       )}
 
-      {status === 'error' && (
-        <p className="px-5 py-6 text-xs text-red-400">Backtest failed — {error}</p>
-      )}
+      {status === 'error' && <p className="px-5 py-6 text-xs text-red-400">Backtest failed — {error}</p>}
 
       {status === 'done' && result && (
         <>
-          <div className="grid grid-cols-4 lg:grid-cols-7 gap-2 px-5 py-4 border-b border-zinc-800">
+          <div className="grid grid-cols-4 lg:grid-cols-8 gap-2 px-5 py-4 border-b border-zinc-800">
             <StatCard label="Total Return" value={fmtPct(result.stats.totalReturnPct)} valueClassName={pctColor(result.stats.totalReturnPct)} />
             <StatCard label="Max Drawdown" value={fmtPct(result.stats.maxDrawdownPct, false)} valueClassName="text-red-400" />
             <StatCard label="Win Rate" value={result.stats.winRate == null ? '—' : `${result.stats.winRate.toFixed(0)}%`} />
@@ -74,11 +75,12 @@ export default function BacktestPanel({ backtest, startingCapital }) {
             <StatCard label="Sharpe (ann.)" value={result.stats.sharpe == null ? '—' : result.stats.sharpe.toFixed(2)} />
             <StatCard label="Total Trades" value={String(result.stats.totalTrades)} />
             <StatCard label="Avg Hold" value={result.stats.avgHoldingDays == null ? '—' : `${result.stats.avgHoldingDays.toFixed(1)}d`} />
+            <StatCard label="Tickers Tested" value={String(result.tickersTested)} />
           </div>
 
-          <div className="px-5 py-4 border-b border-zinc-800">
+          <div className="px-5 py-4">
             <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-2">Equity Curve</p>
-            <div style={{ height: 200 }}>
+            <div style={{ height: 220 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={result.equityCurve} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
                   <CartesianGrid stroke="#27272a" strokeDasharray="3 3" />
@@ -103,32 +105,6 @@ export default function BacktestPanel({ backtest, startingCapital }) {
                 </LineChart>
               </ResponsiveContainer>
             </div>
-          </div>
-
-          <div className="px-5 py-4">
-            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-2">Per-Asset Breakdown</p>
-            <table className="w-full">
-              <thead>
-                <tr className="text-left">
-                  <th className="text-xs text-zinc-500 font-semibold pb-2">Asset</th>
-                  <th className="text-xs text-zinc-500 font-semibold pb-2">Trades</th>
-                  <th className="text-xs text-zinc-500 font-semibold pb-2">Win Rate</th>
-                  <th className="text-xs text-zinc-500 font-semibold pb-2">P&L</th>
-                  <th className="text-xs text-zinc-500 font-semibold pb-2">History Tested</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800/50">
-                {Object.entries(result.perTicker).map(([ticker, t]) => (
-                  <tr key={ticker}>
-                    <td className="py-2 text-sm font-semibold text-zinc-100">{ticker}</td>
-                    <td className="py-2 text-xs text-zinc-300">{t.trades}</td>
-                    <td className="py-2 text-xs text-zinc-300">{t.winRate == null ? '—' : `${t.winRate.toFixed(0)}%`}</td>
-                    <td className={`py-2 text-xs font-semibold ${pctColor(t.pnl)}`}>{fmtPrice(t.pnl)}</td>
-                    <td className="py-2 text-xs text-zinc-500">{t.firstDate} → {t.lastDate}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         </>
       )}

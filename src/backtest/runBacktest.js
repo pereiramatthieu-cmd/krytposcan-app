@@ -1,15 +1,15 @@
-import { evaluateBar } from '../signals';
+import { evaluateSupportSignal } from '../supportResistance.js';
 
 export const STARTING_CAPITAL = 10000;
 const POSITION_PCT = 0.20;
 const MAX_POSITIONS = 5;
-const WARMUP = 60; // bars needed before EMA50 is as converged as it is on first display live
 
-// Replays generateSignals' exact rule set day-by-day across the whole watchlist,
-// applying the same auto-entry/exit portfolio logic as usePaperTrading (20% sizing,
-// max 5 concurrent positions, exit on target/stop/trend-flip) — so the backtest is a
-// faithful simulation of what the live paper trader would have done historically.
-export function runBacktest(historyByTicker) {
+// Replays evaluateSupportSignal day-by-day across every ticker, applying the same
+// portfolio rules a live paper trader would use: 20% sizing, max 5 concurrent
+// positions, exit at target or stop — whichever the day's high/low reaches first
+// (stop wins on a same-day overlap, the conservative call). `options` is forwarded
+// to evaluateSupportSignal so strategy variants can be A/B tested.
+export function runBacktest(historyByTicker, options) {
   const tickers = Object.keys(historyByTicker);
 
   const indexByTime = {};
@@ -45,22 +45,21 @@ export function runBacktest(historyByTicker) {
     }
     if (Object.keys(barsToday).length === 0) continue;
 
-    // ── Exits: target hit, stop hit, or trend reversal ──
+    // ── Exits: intrabar target/stop hit, checked against the day's high/low ──
     const stillOpen = [];
     for (const pos of positions) {
       const today = barsToday[pos.ticker];
       if (!today) { stillOpen.push(pos); continue; }
-      const price = today.bar.price;
-      const evald = today.idx >= WARMUP ? evaluateBar(historyByTicker[pos.ticker], today.idx) : null;
+      const { high, low } = today.bar;
 
       let exitReason = null;
-      if (price >= pos.targetPrice) exitReason = 'target';
-      else if (price <= pos.stopPrice) exitReason = 'stop';
-      else if (evald?.bias === 'bearish') exitReason = 'signal-flip';
+      let exitPrice = null;
+      if (low <= pos.stopPrice) { exitReason = 'stop'; exitPrice = pos.stopPrice; }
+      else if (high >= pos.targetPrice) { exitReason = 'target'; exitPrice = pos.targetPrice; }
 
       if (!exitReason) { stillOpen.push(pos); continue; }
 
-      const proceeds = price * pos.units;
+      const proceeds = exitPrice * pos.units;
       const pnl = proceeds - pos.costBasis;
       cash += proceeds;
       closedTrades.push({
@@ -68,7 +67,7 @@ export function runBacktest(historyByTicker) {
         entryTime: pos.entryTime,
         exitTime: t,
         entryPrice: pos.entryPrice,
-        exitPrice: price,
+        exitPrice,
         pnl,
         pnlPct: (pnl / pos.costBasis) * 100,
         holdingDays: Math.round((t - pos.entryTime) / 86400000),
@@ -77,12 +76,12 @@ export function runBacktest(historyByTicker) {
     }
     positions = stillOpen;
 
-    // ── Entries: one position per ticker, highest confidence first ──
+    // ── Entries: one position per ticker, highest confidence (most-touched support) first ──
     const candidates = [];
     for (const ticker of tickers) {
       const today = barsToday[ticker];
-      if (!today || today.idx < WARMUP) continue;
-      const evald = evaluateBar(historyByTicker[ticker], today.idx);
+      if (!today) continue;
+      const evald = evaluateSupportSignal(historyByTicker[ticker], today.idx, options);
       if (evald?.signal === 'BUY') candidates.push({ ticker, ...evald });
     }
     candidates.sort((a, b) => b.confidence - a.confidence);
