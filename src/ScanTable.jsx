@@ -1,6 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Search, Radar } from 'lucide-react';
 import { fmtPrice, fmtPct } from './format';
+import { fetchKlineSeries, fmtShortDate } from './klines';
+import { SCAN_LOOKBACK_DAYS } from './useSupportScan';
+import SupportChart from './SupportChart';
 
 function SignalBadge({ signal }) {
   const styles = {
@@ -45,6 +48,27 @@ export default function ScanTable({ scan }) {
   const { status, progress, results, error, run } = scan;
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState('distancePct');
+  const [selectedTicker, setSelectedTicker] = useState(null);
+  const [chartSeries, setChartSeries] = useState(null);
+  const [chartLoading, setChartLoading] = useState(false);
+
+  const selectedRow = results.find(r => r.ticker === selectedTicker) ?? null;
+
+  useEffect(() => {
+    if (!selectedTicker) return;
+    let cancelled = false;
+    setChartSeries(null);
+    setChartLoading(true);
+    fetchKlineSeries(selectedTicker, SCAN_LOOKBACK_DAYS, fmtShortDate).then(series => {
+      if (!cancelled) {
+        setChartSeries(series);
+        setChartLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [selectedTicker]);
+
+  const toggleRow = (ticker) => setSelectedTicker(prev => (prev === ticker ? null : ticker));
 
   const rows = useMemo(() => {
     let filtered = results;
@@ -59,7 +83,16 @@ export default function ScanTable({ scan }) {
   const buyCount = results.filter(r => r.signal === 'BUY').length;
 
   return (
-    <div className="mx-5 mb-5 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+    <>
+      {selectedRow && (
+        <SupportChart
+          row={selectedRow}
+          series={chartSeries}
+          loading={chartLoading}
+          onClose={() => setSelectedTicker(null)}
+        />
+      )}
+      <div className="mx-5 mb-5 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
       <div className="px-5 py-3 border-b border-zinc-800 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-2">
           <Radar size={14} className="text-zinc-400" />
@@ -128,7 +161,13 @@ export default function ScanTable({ scan }) {
               {rows.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-zinc-600">No matches.</td></tr>
               ) : rows.map(r => (
-                <tr key={r.ticker} className={`hover:bg-zinc-800/40 transition-colors ${r.signal === 'BUY' ? 'bg-emerald-500/5' : ''}`}>
+                <tr
+                  key={r.ticker}
+                  onClick={() => toggleRow(r.ticker)}
+                  className={`hover:bg-zinc-800/40 transition-colors cursor-pointer ${
+                    r.ticker === selectedTicker ? 'bg-indigo-500/10' : r.signal === 'BUY' ? 'bg-emerald-500/5' : ''
+                  }`}
+                >
                   <td className="px-4 py-3">
                     <span className="text-sm font-semibold text-zinc-100">{r.ticker}</span>
                     <span className="ml-2 text-xs text-zinc-600">{r.name}</span>
@@ -149,6 +188,7 @@ export default function ScanTable({ scan }) {
           </table>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

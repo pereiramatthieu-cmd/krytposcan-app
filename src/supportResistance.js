@@ -94,6 +94,16 @@ function clusterZones(points) {
   return zones.filter(z => z.touches.length >= MIN_TOUCHES);
 }
 
+// Exposes the raw support/resistance zones for chart rendering — same clustering
+// logic evaluateSupportSignal uses internally, no lookahead beyond `idx`.
+export function findZones(series, idx) {
+  const confirmableUpto = idx - PIVOT_LOOKBACK;
+  return {
+    support: clusterZones(findSwingPoints(series, confirmableUpto, 'low', true)),
+    resistance: clusterZones(findSwingPoints(series, confirmableUpto, 'high', false)),
+  };
+}
+
 // Evaluates the support-touch signal at bar `idx` of `series`, using only s[0..idx] —
 // no lookahead. Shared by the live scan (idx = last bar) and the backtester (every
 // historical idx), so both run the identical rule.

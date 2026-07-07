@@ -4,7 +4,7 @@ import { fetchKlineSeries, fmtShortDate, isFlatAsset } from './klines.js';
 import { evaluateSupportSignal } from './supportResistance.js';
 import { runPool } from './pool.js';
 
-const SCAN_LOOKBACK_DAYS = 220; // enough history for meaningful pivot clustering
+export const SCAN_LOOKBACK_DAYS = 220; // enough history for meaningful pivot clustering
 const CONCURRENCY = 12;
 const COIN_COUNT = 300;
 
