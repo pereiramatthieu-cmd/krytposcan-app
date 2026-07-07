@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { calcEMA, calcRSI } from './indicators';
+import { fetchKlineSeries, fmtShortDate } from './klines';
 import { generateSignals } from './signals';
 
 const COIN_IDS = {
@@ -79,71 +79,18 @@ async function fetchWithRetry(url) {
   }
 }
 
-// Fetches 90 days of market_chart data, computes indicators, returns last 30 as series
+// Fetches Binance daily klines (150d lookback for EMA50/ATR/MACD/Bollinger warmup),
+// computes indicators, returns the last 30 days as the displayed series.
+const CHART_LOOKBACK_DAYS = 150;
+
 async function buildChartData(ticker) {
-  const id = COIN_IDS[ticker];
-  const res = await fetchWithRetry(
-    cgUrl(`/coins/${id}/market_chart?vs_currency=usd&days=90&interval=daily`)
-  );
-  const json = await res.json();
-
-  const closes = json.prices.map(([, p]) => p);
-  const vols   = json.total_volumes.map(([, v]) => v);
-  const dates  = json.prices.map(([ts]) => {
-    const d = new Date(ts);
-    return `${d.getMonth() + 1}/${d.getDate()}`;
-  });
-
-  const ema20arr = calcEMA(closes, 20);
-  const ema50arr = calcEMA(closes, 50);
-  const rsiArr   = calcRSI(closes, 14);
-
-  const n = closes.length;
-  const start = Math.max(0, n - 30);
-  // 90d performance: first close → last close of the full 90-day window
-  const perf90d = n >= 2 ? ((closes[n - 1] - closes[0]) / closes[0]) * 100 : null;
-
-  // Decimal precision based on price magnitude
-  const p0 = closes[0];
-  const dec = p0 >= 1000 ? 0 : p0 >= 1 ? 2 : 4;
-
-  const series = dates.slice(start).map((date, i) => {
-    const idx = start + i;
-    return {
-      date,
-      price:  closes[idx],
-      ema20:  parseFloat(ema20arr[idx].toFixed(dec)),
-      ema50:  parseFloat(ema50arr[idx].toFixed(dec)),
-      rsi:    rsiArr[idx],
-      volume: vols[idx],
-      volUp:  idx === 0 || closes[idx] >= closes[idx - 1],
-    };
-  });
-
-  return { series, perf90d };
+  const series = await fetchKlineSeries(ticker, CHART_LOOKBACK_DAYS, fmtShortDate);
+  const n = series.length;
+  // 90d performance: close 90 days ago → latest close
+  const idx90 = n - 91;
+  const perf90d = idx90 >= 0 ? ((series[n - 1].price - series[idx90].price) / series[idx90].price) * 100 : null;
+  return { series: series.slice(Math.max(0, n - 30)), perf90d };
 }
-
-// Serial queue — one chart request at a time, 1.5 s gap between each.
-// Module-level so all hook instances share the same queue (there's only one).
-const chartQueue = {
-  _queue: [],
-  _running: false,
-  enqueue(fn) {
-    return new Promise((resolve, reject) => {
-      this._queue.push({ fn, resolve, reject });
-      if (!this._running) this._drain();
-    });
-  },
-  async _drain() {
-    this._running = true;
-    while (this._queue.length > 0) {
-      const { fn, resolve, reject } = this._queue.shift();
-      try { resolve(await fn()); } catch (e) { reject(e); }
-      if (this._queue.length > 0) await new Promise(r => setTimeout(r, 1500));
-    }
-    this._running = false;
-  },
-};
 
 export function useMarketData() {
   const [watchlist,    setWatchlist]    = useState({});
@@ -222,8 +169,9 @@ export function useMarketData() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // Lazy chart fetch — serialised through chartQueue, 1.5 s between requests.
-  // inFlight prevents the same ticker being enqueued twice.
+  // Lazy chart fetch — Binance's public rate limits are generous enough to fetch
+  // all watchlist tickers in parallel (unlike CoinGecko's free tier previously).
+  // inFlight prevents the same ticker being fetched twice concurrently.
   const inFlight = useRef(new Set());
   const fetchChart = useCallback(async (ticker) => {
     if (cache.current[ticker]) {
@@ -234,7 +182,7 @@ export function useMarketData() {
     inFlight.current.add(ticker);
     setChartLoading(prev => ({ ...prev, [ticker]: true }));
     try {
-      const data = await chartQueue.enqueue(() => buildChartData(ticker));
+      const data = await buildChartData(ticker);
       cache.current[ticker] = data;
       setChartData(prev => ({ ...prev, [ticker]: data }));
     } catch (e) {

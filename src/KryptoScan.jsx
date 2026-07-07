@@ -9,59 +9,20 @@ import {
   ChevronsUpDown, BarChart2, Zap, Clock, Target, AlertCircle, X
 } from 'lucide-react';
 import { useMarketData } from './useMarketData';
+import { usePaperTrading } from './usePaperTrading';
+import { useDerivatives } from './useDerivatives';
+import { useBacktest } from './backtest/useBacktest';
+import { STARTING_CAPITAL as BACKTEST_STARTING_CAPITAL } from './backtest/runBacktest';
+import PaperTradingPanel from './PaperTradingPanel';
+import BacktestPanel from './BacktestPanel';
+import { fmtPrice, fmtLarge, fmtSupply, fmtPct, pctColor, fmtVol, fundingBias } from './format';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// STATIC CONFIG  (opportunities table remains mock — phase 2 scope is data only)
+// STATIC CONFIG
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const WATCHLIST_ORDER = ['BTC','ETH','SOL','CFX','AAVE','ARB','ONDO','IO'];
 const FILTER_TABS = ['All','DeFi','L1','L2','Memes'];
-
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function fmtPrice(p) {
-  if (!p && p !== 0) return '—';
-  if (p >= 10000) return `$${(p / 1000).toFixed(1)}k`;
-  if (p >= 1000)  return `$${p.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-  if (p >= 1)     return `$${p.toFixed(2)}`;
-  return `$${p.toFixed(4)}`;
-}
-
-function fmtLarge(n) {
-  if (!n && n !== 0) return '—';
-  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
-  if (n >= 1e9)  return `$${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6)  return `$${(n / 1e6).toFixed(1)}M`;
-  return `$${n.toFixed(0)}`;
-}
-
-function fmtSupply(n, ticker) {
-  if (!n) return '—';
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B ${ticker}`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M ${ticker}`;
-  return `${n.toLocaleString()} ${ticker}`;
-}
-
-function fmtPct(v, withSign = true) {
-  if (v == null) return '—';
-  const s = withSign && v > 0 ? '+' : '';
-  return `${s}${v.toFixed(2)}%`;
-}
-
-function pctColor(v) {
-  if (v == null) return 'text-zinc-600';
-  return v >= 0 ? 'text-emerald-400' : 'text-red-400';
-}
-
-// Volume axis labels (no $ prefix)
-function fmtVol(v) {
-  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
-  if (v >= 1e6) return `${(v / 1e6).toFixed(0)}M`;
-  return v.toFixed(0);
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // LOADING SKELETON
@@ -411,7 +372,7 @@ function ChartSpinner() {
   );
 }
 
-function AssetDeepDive({ selectedCoin, coin, chartResult, isChartLoading }) {
+function AssetDeepDive({ selectedCoin, coin, chartResult, isChartLoading, derivative }) {
   const series = chartResult?.series ?? [];
 
   const seriesPrices = series.map(d => d.price).filter(Boolean);
@@ -554,6 +515,21 @@ function AssetDeepDive({ selectedCoin, coin, chartResult, isChartLoading }) {
             <p className={`text-sm font-bold ${pctColor(athPct)}`}>{fmtPct(athPct)}</p>
             <p className="text-xs text-zinc-600 mt-0.5">ATH was {fmtPrice(coin?.ath)}</p>
           </div>
+          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mt-4 mb-3">Derivatives (Binance Perp)</p>
+          <div className="space-y-0">
+            <StatRow
+              label="Funding Rate (8h)"
+              value={derivative ? `${derivative.fundingRatePct >= 0 ? '+' : ''}${derivative.fundingRatePct.toFixed(4)}%` : '—'}
+            />
+            <StatRow
+              label="Funding (annualized)"
+              value={derivative ? fmtPct(derivative.fundingRatePct * 3 * 365) : '—'}
+            />
+            <StatRow label="Open Interest" value={derivative ? fmtLarge(derivative.openInterestUsd) : '—'} />
+          </div>
+          <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-semibold ${fundingBias(derivative?.fundingRatePct).className}`}>
+            {fundingBias(derivative?.fundingRatePct).label}
+          </div>
         </div>
       </div>
     </div>
@@ -582,7 +558,7 @@ function TradeOpportunitiesTable({ activeFilter, onSelectCoin, opportunities }) 
       const order = sortConfig.dir === 'asc' ? 1 : -1;
       return a[sortConfig.key] > b[sortConfig.key] ? order : -order;
     });
-  }, [activeFilter, sortConfig]);
+  }, [opportunities, activeFilter, sortConfig]);
 
   const tfBg = { '1D': 'bg-blue-500/15 text-blue-400', '4H': 'bg-violet-500/15 text-violet-400', '1W': 'bg-teal-500/15 text-teal-400' };
 
@@ -673,6 +649,10 @@ export default function KryptoScan() {
     loading, error, dismissError,
   } = useMarketData();
 
+  const paper = usePaperTrading(opportunities, watchlist);
+  const derivatives = useDerivatives(WATCHLIST_ORDER);
+  const backtest = useBacktest(WATCHLIST_ORDER);
+
   // Lazy-fetch chart data whenever the selected coin changes
   useEffect(() => {
     fetchChart(selectedCoin);
@@ -694,11 +674,14 @@ export default function KryptoScan() {
             fearGreed={fearGreed}
             buySignalCount={opportunities.filter(o => o.signal === 'BUY').length}
           />
+          <PaperTradingPanel paper={paper} watchlist={watchlist} />
+          <BacktestPanel backtest={backtest} startingCapital={BACKTEST_STARTING_CAPITAL} />
           <AssetDeepDive
             selectedCoin={selectedCoin}
             coin={watchlist[selectedCoin]}
             chartResult={chartData[selectedCoin]}
             isChartLoading={!!chartLoading[selectedCoin]}
+            derivative={derivatives[selectedCoin]}
           />
           <TradeOpportunitiesTable
             activeFilter={activeFilter}
